@@ -5,6 +5,9 @@ LiveRundown is an open-source, real-time theatrical rundown engine coded with Ge
 ### See live: [https://leonampa.github.io/liverundown](https://leonampa.github.io/liverundown)
 > Real-time global device syncing is disabled to protect my Firebase free-tier usage limits from public API abuse. The UI navigation, hardware key bindings, and markdown parser are fully functional locally.
 
+<img width="1191" height="1022" alt="image" src="https://github.com/user-attachments/assets/12e23f69-13c5-48c6-a1ed-5437a8d380f6" />
+
+
 ## The Problem  
 During theatrical productions involving large ensembles (50+ cast and production crew members), traditional script management breaks down:
 
