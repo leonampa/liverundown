@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveRundown</title>
+
+    <!-- Firebase SDKs (loaded before everything) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #4a4a4a;
+            --row-bg: #666666;
+            --action-bg: #3a3a3a;
+            --text-light: #ffffff;
+            --text-dark: #000000;
+            --active-bg: #ffffff;
+        }
+        body {
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--text-light);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            cursor: pointer;
+        }
+        #upload-container {
+            padding: 20px;
+            text-align: center;
+            background: #222;
+            z-index: 100;
+            cursor: default;
+        }
+        #script-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 20px 20px 120px 20px;
+            scroll-behavior: smooth;
+            scroll-padding-top: 100px;
+        }
+        .line-row {
+            display: flex;
+            background-color: var(--row-bg);
+            margin-bottom: 10px;
+            border-radius: 8px;
+            font-size: 24px;
+            align-items: center;
+            transition: all 0.1s ease;
+        }
+        .action-row {
+            display: flex;
+            background-color: var(--action-bg);
+            margin-bottom: 10px;
+            border-radius: 8px;
+            font-size: 20px;
+            align-items: center;
+            justify-content: center;
+            padding: 15px;
+            color: #b0b0b0;
+            font-style: italic;
+            text-align: center;
+            transition: all 0.1s ease;
+        }
+        .line-row.active, .action-row.active {
+            background-color: var(--active-bg);
+            color: var(--text-dark);
+            transform: scale(1.01);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            font-weight: bold;
+        }
+        .actor-tag {
+            padding: 15px 20px;
+            font-weight: bold;
+            border-radius: 8px 0 0 8px;
+            min-width: 120px;
+            text-align: center;
+            color: white;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        .dialogue { padding: 15px 20px; flex-grow: 1; }
+
+        /* ── DASHBOARD ───────────────────────── */
+        #dashboard {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            background: #333;
+            display: flex;
+            padding: 10px;
+            padding-right: 100px; /* room for SYNC button */
+            gap: 5px;
+            overflow-x: auto;
+            border-top: 2px solid #222;
+        }
+        .dash-block {
+            display: flex;
+            flex-direction: column;
+            width: 80px;
+            text-align: center;
+            border-radius: 4px;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .dash-name { font-size: 12px; padding: 5px; font-weight: bold; color: white; }
+        .dash-count { background: #555; color: white; font-size: 32px; padding: 5px; }
+        .dash-block.active .dash-count { color: #ff3333; font-weight: bold; }
+
+        /* ── SYNC BUTTON ─────────────────────── */
+        #sync-btn {
+            position: fixed;
+            bottom: 10px; right: 10px;
+            width: 80px;
+            display: flex;
+            flex-direction: column;
+            text-align: center;
+            border-radius: 4px;
+            overflow: hidden;
+            cursor: pointer;
+            z-index: 200;
+            user-select: none;
+            transition: transform 0.1s;
+        }
+        #sync-btn:active { transform: scale(0.96); }
+        #sync-btn-top {
+            font-size: 12px;
+            padding: 5px;
+            font-weight: bold;
+            color: white;
+            background: #555;
+            transition: background 0.3s;
+        }
+        #sync-btn-bottom {
+            background: #444;
+            font-size: 32px;
+            padding: 5px 5px 3px 5px;
+            line-height: 1;
+        }
+        #sync-btn.broadcasting #sync-btn-top { background: #1565c0; }
+        #sync-btn.following    #sync-btn-top { background: #2e7d32; }
+
+        /* ── SYNC PANEL ──────────────────────── */
+        #sync-panel {
+            position: fixed;
+            bottom: 90px; right: 10px;
+            width: 280px;
+            background: #2a2a2a;
+            border-radius: 10px;
+            border: 1px solid #444;
+            box-shadow: 0 -4px 28px rgba(0,0,0,0.75);
+            z-index: 300;
+            overflow: hidden;
+            display: none;
+            flex-direction: column;
+            cursor: default;
+        }
+        #sync-panel-header {
+            background: #1a1a1a;
+            padding: 12px 16px;
+            font-weight: bold;
+            font-size: 15px;
+            letter-spacing: 0.4px;
+        }
+        #sync-panel-body {
+            padding: 14px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .sync-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 14px;
+        }
+
+        /* Toggle switch */
+        .toggle-wrap {
+            position: relative;
+            width: 46px; height: 26px;
+            flex-shrink: 0;
+        }
+        .toggle-wrap input { opacity: 0; width: 0; height: 0; position: absolute; }
+        .toggle-track {
+            position: absolute;
+            inset: 0;
+            background: #555;
+            border-radius: 26px;
+            transition: background 0.2s;
+            cursor: pointer;
+        }
+        .toggle-thumb {
+            position: absolute;
+            top: 3px; left: 3px;
+            width: 20px; height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.2s;
+            pointer-events: none;
+        }
+        .toggle-wrap input:checked ~ .toggle-track { background: #1e88e5; }
+        .toggle-wrap input:checked ~ .toggle-thumb { transform: translateX(20px); }
+        .toggle-wrap.disabled { opacity: 0.35; pointer-events: none; }
+
+        #broadcast-name-row { display: none; }
+        #broadcast-name-input {
+            width: 100%;
+            background: #3a3a3a;
+            border: 1px solid #555;
+            border-radius: 6px;
+            color: white;
+            padding: 8px 10px;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+            box-sizing: border-box;
+        }
+        #broadcast-name-input:focus { outline: none; border-color: #1e88e5; }
+
+        .sync-label {
+            font-size: 11px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            font-weight: bold;
+        }
+        #broadcasts-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 160px;
+            overflow-y: auto;
+        }
+        .broadcast-item {
+            background: #383838;
+            border-radius: 6px;
+            padding: 9px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border: 1px solid transparent;
+            transition: background 0.15s;
+        }
+        .broadcast-item:hover { background: #484848; }
+        .broadcast-item.selected { background: #1b3a24; border-color: #388e3c; }
+        .broadcast-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #43a047;
+            flex-shrink: 0;
+        }
+        #no-broadcasts-msg {
+            font-size: 13px;
+            color: #555;
+            font-style: italic;
+            text-align: center;
+            padding: 12px 0;
+        }
+        #sync-panel-footer {
+            background: #1a1a1a;
+            padding: 10px 16px;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            font-size: 13px;
+        }
+        #sync-status-indicator {
+            width: 11px; height: 11px;
+            border-radius: 50%;
+            background: #cc2222;
+            flex-shrink: 0;
+            transition: background 0.3s;
+        }
+        #sync-status-text { color: #999; font-size: 13px; }
+
+        /* ── TOAST ───────────────────────────── */
+        #sync-toast {
+            position: fixed;
+            bottom: 96px; right: 10px;
+            background: #3a3a3a;
+            border: 1px solid #555;
+            color: white;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            z-index: 500;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        #sync-toast.show { opacity: 1; }
+    </style>
+</head>
+<body>
+
+<div id="upload-container">
+    <p>Searching for script.md... If not found, upload here:</p>
+    <input type="file" id="fileInput" accept=".md,.txt">
+</div>
+
+<div id="script-container"></div>
+<div id="dashboard"></div>
+
+<!-- ── SYNC BUTTON ──────────────────────────── -->
+<div id="sync-btn" class="idle">
+    <div id="sync-btn-top">SYNC</div>
+    <div id="sync-btn-bottom">🔴</div>
+</div>
+
+<!-- ── SYNC PANEL ───────────────────────────── -->
+<div id="sync-panel">
+    <div id="sync-panel-header">🔄 Sync Options</div>
+    <div id="sync-panel-body">
+
+        <div class="sync-row">
+            <span>Broadcast my index?</span>
+            <label class="toggle-wrap" id="broadcast-toggle-wrap">
+                <input type="checkbox" id="broadcast-toggle">
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+            </label>
+        </div>
+
+        <div id="broadcast-name-row">
+            <input type="text" id="broadcast-name-input" placeholder="Type your name...">
+        </div>
+
+        <div>
+            <div class="sync-label" style="margin-bottom: 8px;">Available broadcasts:</div>
+            <div id="broadcasts-list">
+                <div id="no-broadcasts-msg">No active broadcasts found.</div>
+            </div>
+        </div>
+
+    </div>
+    <div id="sync-panel-footer">
+        <div id="sync-status-indicator"></div>
+        <span id="sync-status-text">Idle</span>
+    </div>
+</div>
+
+<div id="sync-toast"></div>
+
+<script>
+    // ════════════════════════════════════════════════════
+    //  FIREBASE CONFIG
+    //  Replace all values below with your own config object
+    //  from the Firebase Console (Project Settings → Web App)
+    // ════════════════════════════════════════════════════
+    const FIREBASE_CONFIG = {
+        apiKey:            "YOUR_API_KEY",
+        authDomain:        "YOUR_PROJECT.firebaseapp.com",
+        databaseURL:       "https://YOUR_PROJECT-default-rtdb.europe-west1.firebasedatabase.app",
+        projectId:         "YOUR_PROJECT",
+        storageBucket:     "YOUR_PROJECT.appspot.com",
+        messagingSenderId: "YOUR_SENDER_ID",
+        appId:             "YOUR_APP_ID"
+    };
+    // ════════════════════════════════════════════════════
+
+
+    // ── CORE VARIABLES ──────────────────────────────────
+    const colorPalette = [
+        '#ff0000','#00aa00','#0000ff','#ff00ff','#ff8c00',
+        '#cccc00','#00cccc','#8a2be2','#ff1493','#00ced1',
+        '#adff2f','#888888','#1e90ff','#815129','#30703D',
+        '#000077','#C6A664','#924E7D','#cc4400'
+    ];
+    let charColors = {}, characters = [], scriptLines = [];
+    let currentIndex = -1, clickTimer = null;
+
+
+    // ── SYNC VARIABLES ───────────────────────────────────
+    const ANIMALS = [
+        'Fox','Leopard','Tiger','Bear','Wolf','Eagle','Hawk',
+        'Owl','Lynx','Puma','Jaguar','Falcon','Raven','Cobra',
+        'Crane','Heron','Bison','Otter','Viper','Moose'
+    ];
+    let myName       = 'Anonymous ' + ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
+    let syncState    = 'idle';   // 'idle' | 'broadcasting' | 'following'
+    let followingName     = null;
+    let myBroadcastRef    = null;
+    let followRef         = null;
+    let heartbeatTimer    = null;
+    let firebaseReady     = false;
+    let db                = null;
+    let syncPanelOpen     = false;
+    let lastAvailable     = {};
+    let toastTimer        = null;
+
+
+    // ── INIT ─────────────────────────────────────────────
+    // The <script> tag is at the bottom of <body>, so every DOM element
+    // above it already exists. No need for DOMContentLoaded — run directly.
+
+    // Firebase (only if config has been filled in)
+    if (FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY') {
+        try {
+            firebase.initializeApp(FIREBASE_CONFIG);
+            db = firebase.database();
+            firebaseReady = true;
+            listenToBroadcasts();
+        } catch (e) {
+            console.error('Firebase init failed:', e);
+        }
+    }
+
+    // Name input
+    document.getElementById('broadcast-name-input').value = myName;
+    document.getElementById('broadcast-name-input').addEventListener('change', onNameChange);
+    document.getElementById('broadcast-name-input').addEventListener('keydown', e => e.stopPropagation());
+    document.getElementById('broadcast-name-input').addEventListener('click',   e => e.stopPropagation());
+
+    // Sync button — toggle panel
+    document.getElementById('sync-btn').addEventListener('click', e => {
+        e.stopPropagation();
+        toggleSyncPanel();
+    });
+
+    // Sync panel — prevent body click from advancing lines
+    document.getElementById('sync-panel').addEventListener('click', e => e.stopPropagation());
+
+    // Broadcast toggle checkbox
+    document.getElementById('broadcast-toggle').addEventListener('change', onBroadcastToggle);
+
+    // Auto-load script — window.onload matches the original code's pattern
+    // and fires safely after all resources, avoiding any CDN timing race
+    window.onload = () => {
+        fetch('script.md')
+            .then(r => r.ok ? r.text() : Promise.reject())
+            .then(text => {
+                parseScript(text);
+                document.getElementById('upload-container').style.display = 'none';
+            })
+            .catch(() => console.log('script.md not found, waiting for upload.'));
+    };
+
+
+    // ── FIREBASE ─────────────────────────────────────────
+    function listenToBroadcasts() {
+        db.ref('broadcasts').on('value', snapshot => {
+            const now = Date.now();
+            lastAvailable = {};
+            snapshot.forEach(child => {
+                const d = child.val();
+                if (!d) return;
+                // Filter stale (> 30 seconds since heartbeat)
+                if (now - (d.lastSeen || 0) > 30000) return;
+                // Don't list ourselves
+                if (syncState === 'broadcasting' && child.key === myName) return;
+                lastAvailable[child.key] = d;
+            });
+
+            // Broadcaster we were following has gone offline
+            if (syncState === 'following' && followingName && !lastAvailable[followingName]) {
+                setSyncState('idle');
+                showToast('⚠️ Broadcaster disconnected.');
+            }
+
+            renderBroadcastsList();
+        });
+    }
+
+    function setSyncState(newState, name) {
+        // ── Tear down current state ──
+        if (myBroadcastRef) { myBroadcastRef.remove(); myBroadcastRef = null; }
+        clearInterval(heartbeatTimer); heartbeatTimer = null;
+        if (followRef) { followRef.off(); followRef = null; }
+
+        syncState     = newState;
+        followingName = null;
+
+        const toggleEl   = document.getElementById('broadcast-toggle');
+        const toggleWrap = document.getElementById('broadcast-toggle-wrap');
+        const nameRow    = document.getElementById('broadcast-name-row');
+
+        // ── Set up new state ──
+        if (newState === 'broadcasting') {
+            myName         = name;
+            myBroadcastRef = db.ref('broadcasts/' + name);
+            myBroadcastRef.set({ index: currentIndex, lastSeen: Date.now() });
+            myBroadcastRef.onDisconnect().remove();  // auto-clean on tab close
+            heartbeatTimer = setInterval(() => {
+                if (myBroadcastRef) myBroadcastRef.update({ lastSeen: Date.now() });
+            }, 15000);
+            toggleEl.checked = true;
+            nameRow.style.display = 'block';
+            toggleWrap.classList.remove('disabled');
+        }
+
+        if (newState === 'following') {
+            followingName  = name;
+            followRef      = db.ref('broadcasts/' + name + '/index');
+            followRef.on('value', snap => {
+                const idx = snap.val();
+                if (idx !== null && idx !== undefined) advanceLine(idx, true);
+            });
+            toggleEl.checked = false;
+            nameRow.style.display = 'none';
+            toggleWrap.classList.add('disabled');   // can't broadcast and follow simultaneously
+        }
+
+        if (newState === 'idle') {
+            toggleEl.checked = false;
+            nameRow.style.display = 'none';
+            toggleWrap.classList.remove('disabled');
+        }
+
+        updateSyncUI();
+        renderBroadcastsList();
+    }
+
+
+    // ── SYNC EVENT HANDLERS ──────────────────────────────
+    function onBroadcastToggle() {
+        if (!firebaseReady) {
+            document.getElementById('broadcast-toggle').checked = false;
+            showToast('⚠️ Firebase not configured yet.');
+            return;
+        }
+        const on = document.getElementById('broadcast-toggle').checked;
+        if (on) {
+            const name = document.getElementById('broadcast-name-input').value.trim() || myName;
+            document.getElementById('broadcast-name-input').value = name;
+            setSyncState('broadcasting', name);
+        } else {
+            setSyncState('idle');
+        }
+    }
+
+    function onNameChange() {
+        if (syncState !== 'broadcasting') return;
+        const newName = document.getElementById('broadcast-name-input').value.trim();
+        if (newName && newName !== myName) setSyncState('broadcasting', newName);
+    }
+
+    function onBroadcastItemClick(name) {
+        if (!firebaseReady) return;
+        if (syncState === 'following' && followingName === name) {
+            setSyncState('idle');
+            showToast('Stopped following ' + name + '.');
+        } else {
+            setSyncState('following', name);
+            showToast('Now following ' + name + '.');
+        }
+    }
+
+
+    // ── SYNC UI ──────────────────────────────────────────
+    function updateSyncUI() {
+        const btn = document.getElementById('sync-btn');
+        const dot = document.getElementById('sync-btn-bottom');
+        const ind = document.getElementById('sync-status-indicator');
+        const txt = document.getElementById('sync-status-text');
+
+        btn.className = syncState;
+
+        if (syncState === 'idle') {
+            dot.textContent      = '🔴';
+            ind.style.background = '#cc2222';
+            txt.textContent      = 'Idle';
+        } else if (syncState === 'broadcasting') {
+            dot.textContent      = '🔵';
+            ind.style.background = '#1e88e5';
+            txt.textContent      = myName;
+        } else if (syncState === 'following') {
+            dot.textContent      = '🟢';
+            ind.style.background = '#43a047';
+            txt.textContent      = followingName;
+        }
+    }
+
+    function renderBroadcastsList() {
+        const list  = document.getElementById('broadcasts-list');
+        const names = Object.keys(lastAvailable);
+        if (names.length === 0) {
+            list.innerHTML = '<div id="no-broadcasts-msg">No active broadcasts found.</div>';
+            return;
+        }
+        list.innerHTML = names.map(n => {
+            const safe     = n.replace(/'/g, "\\'");
+            const selected = (syncState === 'following' && followingName === n) ? 'selected' : '';
+            return `<div class="broadcast-item ${selected}" onclick="onBroadcastItemClick('${safe}')">
+                        <span>${n}</span>
+                        <div class="broadcast-dot"></div>
+                    </div>`;
+        }).join('');
+    }
+
+    function toggleSyncPanel() {
+        syncPanelOpen = !syncPanelOpen;
+        document.getElementById('sync-panel').style.display = syncPanelOpen ? 'flex' : 'none';
+    }
+
+    function showToast(msg) {
+        const t = document.getElementById('sync-toast');
+        t.textContent = msg;
+        t.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+
+    // ── SCRIPT PARSING ───────────────────────────────────
+    document.getElementById('fileInput').addEventListener('change', e => {
+        if (!e.target.files[0]) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+            parseScript(ev.target.result);
+            document.getElementById('upload-container').style.display = 'none';
+        };
+        reader.readAsText(e.target.files[0]);
+    });
+
+    function parseScript(text) {
+        scriptLines = []; charColors = {}; characters = [];
+        text.split('\n').forEach(line => {
+            let cl = line
+                .replace(/\\!/g,  '!')
+                .replace(/\\\[/g, '[')
+                .replace(/\\\]/g, ']')
+                .replace(/\*/g,   '')
+                .replace(/^#+\s*/, '')
+                .trim();
+            if (!cl) return;
+            const mm = cl.match(/^\[\d{3}\]\s*(.*)/);
+            if (mm) cl = mm[1];
+
+            if (cl.startsWith('[') || cl.startsWith('(') || cl.startsWith('|')) {
+                scriptLines.push({ type: 'action', text: cl });
+            } else {
+                const m = cl.match(/^([^\s:&]+(?:\s*&\s*[^\s:&]+)*)[:\s]+(.*)/);
+                if (m) {
+                    const actors = m[1].split('&').map(a => a.trim());
+                    actors.forEach(a => {
+                        if (!charColors[a]) charColors[a] = colorPalette[Object.keys(charColors).length % colorPalette.length];
+                        if (!characters.includes(a)) characters.push(a);
+                    });
+                    scriptLines.push({ type: 'dialogue', actors, dialogue: m[2] });
+                } else {
+                    scriptLines.push({ type: 'action', text: cl });
+                }
+            }
+        });
+        renderScript(); initDashboard(); advanceLine(0);
+    }
+
+    function renderScript() {
+        const c = document.getElementById('script-container');
+        c.innerHTML = '';
+        scriptLines.forEach((line, i) => {
+            const row = document.createElement('div');
+            row.id = 'line-' + i;
+            row.addEventListener('dblclick', () => advanceLine(i));
+            if (line.type === 'action') {
+                row.className = 'action-row';
+                row.innerHTML = `<div>${line.text}</div>`;
+            } else {
+                row.className = 'line-row';
+                row.innerHTML = `<div class="actor-tag" style="background-color:${charColors[line.actors[0]]}">${line.actors.join(' & ')}</div><div class="dialogue">${line.dialogue}</div>`;
+            }
+            c.appendChild(row);
+        });
+    }
+
+    function initDashboard() {
+        const d = document.getElementById('dashboard');
+        d.innerHTML = '';
+        characters.forEach(char => {
+            d.innerHTML += `<div class="dash-block" id="dash-${char}"><div class="dash-name" style="background-color:${charColors[char]}">${char}</div><div class="dash-count" id="count-${char}">--</div></div>`;
+        });
+    }
+
+    function updateDashboard() {
+        characters.forEach(char => {
+            let distance = '--', isActive = false;
+            for (let i = currentIndex; i < scriptLines.length; i++) {
+                if (scriptLines[i].type === 'dialogue' && scriptLines[i].actors.includes(char)) {
+                    distance = i - currentIndex;
+                    if (distance === 0) isActive = true;
+                    distance = distance < 10 ? '0' + distance : String(distance);
+                    break;
+                }
+            }
+            document.getElementById('count-' + char).innerText = distance;
+            document.getElementById('dash-' + char).classList.toggle('active', isActive);
+        });
+    }
+
+    function advanceLine(targetIndex, fromSync = false) {
+        if (targetIndex < 0 || targetIndex >= scriptLines.length) return;
+        if (!fromSync && syncState === 'following') return; // locked while following
+        if (currentIndex >= 0) {
+            const prev = document.getElementById('line-' + currentIndex);
+            if (prev) prev.classList.remove('active');
+        }
+        currentIndex = targetIndex;
+        const el = document.getElementById('line-' + currentIndex);
+        if (el) {
+            el.classList.add('active');
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            updateDashboard();
+        }
+        // Push to Firebase when broadcasting (but not when receiving a sync)
+        if (!fromSync && syncState === 'broadcasting' && myBroadcastRef) {
+            myBroadcastRef.update({ index: currentIndex, lastSeen: Date.now() });
+        }
+    }
+
+
+    // ── INPUT HANDLERS ───────────────────────────────────
+    document.body.addEventListener('click', e => {
+        if (e.target.closest('#upload-container')) return;
+        if (e.target.closest('#sync-btn') || e.target.closest('#sync-panel')) return;
+        // Click outside an open panel → close it (don't advance)
+        if (syncPanelOpen) {
+            syncPanelOpen = false;
+            document.getElementById('sync-panel').style.display = 'none';
+            return;
+        }
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+        else { clickTimer = setTimeout(() => { advanceLine(currentIndex + 1); clickTimer = null; }, 250); }
+    });
+
+    window.addEventListener('keydown', e => {
+        if (e.key === 'ArrowDown' || e.key === 'F13') { e.preventDefault(); advanceLine(currentIndex + 1); }
+        if (e.key === 'ArrowUp')  { e.preventDefault(); if (currentIndex > 0) advanceLine(currentIndex - 1); }
+    });
+</script>
+</body>
+</html>
